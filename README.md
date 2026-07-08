@@ -80,7 +80,10 @@ Contributions, suggestions, and improvements are welcome.
 
 Steps:
 
-1. Fork the repository
+1. Fork the repository / clone repository 
+
+```git clone "https://github.com/jhcyrene/novelLux.git"```
+
 2. Create a new branch
 3. Make your changes
 4. Submit a pull request
