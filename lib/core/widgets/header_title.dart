@@ -6,13 +6,13 @@ class NovelLuxBrand extends StatelessWidget {
     super.key,
     this.fontSize = 28,
     this.color,
-    this.margin = EdgeInsets.zero,
+    this.padding = EdgeInsets.zero,
     this.text = 'NoveLux',
   });
 
   final double fontSize;
   final Color? color;
-  final EdgeInsetsGeometry margin;
+  final EdgeInsetsGeometry padding;
   final String text;
 
   @override
@@ -20,16 +20,18 @@ class NovelLuxBrand extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Padding(
-      padding: margin,
+      padding: padding,
+      
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Image.asset(
-            'assets/images/logo2.png',
-            height: fontSize + 15,
-            fit: BoxFit.contain,
-          ),
-          const SizedBox(width: 8),
+          // Image.asset(
+          //   'assets/images/logo2.png',
+          //   height: fontSize + 15,
+          //   fit: BoxFit.contain,
+          // ),
+          // const SizedBox(width: 8),
           Text(
             text,
             maxLines: 1,

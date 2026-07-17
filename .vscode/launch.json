@@ -5,6 +5,11 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Flutter: Attach to Device",
+            "type": "dart",
+            "request": "attach"
+        },
+        {
             "name": "Dart",
             "type": "dart",
             "request": "launch",
@@ -33,15 +38,5 @@
             "type": "dart",
             "flutterMode": "release"
         },
-        {
-            "name": "novel_lux (Phone + Chrome)",
-            "request": "launch",
-            "type": "dart",
-            "program": "lib/main.dart",
-            "args": [
-                "-d", "192.168.1.62:42565",
-                "-d", "chrome"
-            ]
-        }
     ]
 }

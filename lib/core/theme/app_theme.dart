@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_font.dart';
 
 abstract class AppColors {
   static const Color deepBlack = Color(0xFF0D0D0D);        // deep black (logo background)
@@ -22,10 +23,14 @@ abstract final class AppTheme {
       surface: AppColors.ivory,
     );
 
+
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: AppColors.white,
+      textTheme: AppFonts.interfaceTextTheme(
+        Brightness.light,
+      ),
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.white,
         foregroundColor: AppColors.deepBlack,
@@ -81,6 +86,9 @@ abstract final class AppTheme {
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: AppColors.darkBackground,
+      textTheme: AppFonts.interfaceTextTheme(
+        Brightness.dark,
+      ),
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.darkBackground,
         foregroundColor: Colors.white,
@@ -97,10 +105,10 @@ abstract final class AppTheme {
         elevation: 0,
         type: BottomNavigationBarType.fixed,
         selectedIconTheme: IconThemeData(
-          size: 35,
+          size: 24,
         ),
         unselectedIconTheme: IconThemeData(
-          size: 23,
+          size: 24,
         ),
         selectedLabelStyle: TextStyle(
           fontSize: 10,

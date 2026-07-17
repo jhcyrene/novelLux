@@ -14,7 +14,7 @@ class EpubPickerService {
     uniformTypeIdentifiers: ['org.idpf.epub-container'],
   );
 
-  static Future<File?> pickAndSaveEpub(
+  static Future<File?> pickAndSaveEpub(//pick an epub file and save it to a temporary directory
     BuildContext context,
   ) async {
     try {
@@ -27,29 +27,12 @@ class EpubPickerService {
         return null;
       }
 
-      final temporaryDirectory =
-        await getTemporaryDirectory();
-
-      final booksDirectory = Directory(
-        path.join(
-          temporaryDirectory.path,
-          'NovelLux',
-          'books',
-        ),
-      );
-
-      if (!await booksDirectory.exists()) {
-        await booksDirectory.create(recursive: true);
-      }
+      final booksDirectory = await getBooksDirectory();
 
       final selectedBytes = await selectedFile.readAsBytes();
-      final selectedHash =
-      sha256.convert(selectedBytes).toString();
+      final selectedHash = sha256.convert(selectedBytes).toString();
 
-      final duplicateFile = await _findDuplicate(
-        booksDirectory,
-        selectedHash,
-      );
+      final duplicateFile = await _findDuplicate(booksDirectory, selectedHash,);
 
       if (duplicateFile != null) {
         if (context.mounted) {
@@ -108,7 +91,26 @@ class EpubPickerService {
     }
   }
 
-  static Future<File?> _findDuplicate(
+  static Future<Directory> getBooksDirectory() async {//get the directory where the books are stored
+    final temporaryDirectory =
+        await getTemporaryDirectory();
+
+    final booksDirectory = Directory(
+      path.join(
+        temporaryDirectory.path,
+        'NovelLux',
+        'books',
+      ),
+    );
+
+    if (!await booksDirectory.exists()) {
+      await booksDirectory.create(recursive: true);
+    }
+
+    return booksDirectory;
+  }
+
+  static Future<File?> _findDuplicate(//check for duplicate files based on hash
       Directory booksDirectory,
       String selectedHash,
       ) async {
@@ -134,7 +136,7 @@ class EpubPickerService {
     return null;
   }
 
-  static String _sanitizeFilename(String filename) {
+  static String _sanitizeFilename(String filename) {//clean the filename to remove any invalid characters for file systems
     return path.basename(filename).replaceAll(
           RegExp(r'[^a-zA-Z0-9._ -]'),
           '_',
