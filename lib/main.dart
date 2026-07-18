@@ -13,6 +13,7 @@ import 'features/reader/reader_page.dart';
 import 'features/library/library_page.dart';
 import 'features/home/home_page.dart';
 import 'features/profile/profile_page.dart';
+import 'features/search/search_page.dart';
 
 
 void main() {
@@ -126,6 +127,8 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
           Center(child: Text('Reader')),
           const ProfilePage(),
+          SearchPage(onOpenBook: openReader),
+          Center(child: Text('Profile')),
         ],
       ),
       bottomNavigationBar: BottomNav(
