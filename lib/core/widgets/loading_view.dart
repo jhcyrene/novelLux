@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:novel_lux/core/theme/app_theme.dart';
 
 class LoadingView extends StatelessWidget {
   const LoadingView({
@@ -23,6 +24,8 @@ class LoadingView extends StatelessWidget {
             Theme.of(context).brightness == Brightness.dark;
 
         return Scaffold(
+          backgroundColor:
+              isDark ? AppColors.deepBlack : AppColors.white,
           body: SizedBox.expand(
             child: Image.asset(
               isDark
@@ -38,3 +41,4 @@ class LoadingView extends StatelessWidget {
     );
   }
 }
+
