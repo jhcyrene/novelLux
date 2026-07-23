@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:epubx/epubx.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +6,7 @@ import 'package:flutter_html/flutter_html.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/models/book_metadata.dart';
+import '../../core/provider/metadata_provider.dart';
 import '../../core/provider/reading_progress_provider.dart';
 import '../../core/theme/app_font.dart';
 import '../../core/theme/app_theme.dart';
@@ -20,16 +20,20 @@ class ReaderPage extends StatefulWidget {
   final BookMetadata book;
 
   @override
-  State<ReaderPage> createState() => _ReaderPageState();
+  State<ReaderPage> createState() =>
+      _ReaderPageState();
 }
 
 class _ReaderPageState extends State<ReaderPage>
-  with WidgetsBindingObserver {
+    with WidgetsBindingObserver {
   bool _isClosing = false;
+  bool _didStartLoading = false;
+
   final ScrollController _scrollController =
       ScrollController();
 
   late ReadingProgressProvider _progressProvider;
+  late TemporaryLibraryProvider _libraryProvider;
 
   List<EpubChapter> _chapters = [];
 
@@ -57,8 +61,6 @@ class _ReaderPageState extends State<ReaderPage>
     super.initState();
 
     WidgetsBinding.instance.addObserver(this);
-
-    _loadBook();
   }
 
   @override
@@ -67,6 +69,14 @@ class _ReaderPageState extends State<ReaderPage>
 
     _progressProvider =
         context.read<ReadingProgressProvider>();
+
+    _libraryProvider =
+        context.read<TemporaryLibraryProvider>();
+
+    if (!_didStartLoading) {
+      _didStartLoading = true;
+      unawaited(_loadBook());
+    }
   }
 
   @override
@@ -83,7 +93,6 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-
     _scrollController.dispose();
 
     super.dispose();
@@ -96,16 +105,13 @@ class _ReaderPageState extends State<ReaderPage>
     });
 
     try {
-      final file = File(widget.book.filePath);
+      final bytes =
+          await _libraryProvider.readBookBytes(
+        widget.book.id,
+      );
 
-      if (!await file.exists()) {
-        throw Exception(
-          'The EPUB file is no longer available.',
-        );
-      }
-
-      final bytes = await file.readAsBytes();
-      final epubBook = await EpubReader.readBook(bytes);
+      final epubBook =
+          await EpubReader.readBook(bytes);
 
       final chapters = <EpubChapter>[];
 
@@ -127,7 +133,9 @@ class _ReaderPageState extends State<ReaderPage>
       }
 
       final savedProgress =
-          _progressProvider.progressFor(widget.book.id);
+          _progressProvider.progressFor(
+        widget.book.id,
+      );
 
       final savedChapterIndex =
           savedProgress?.chapterIndex ?? 0;
@@ -139,9 +147,10 @@ class _ReaderPageState extends State<ReaderPage>
       setState(() {
         _chapters = chapters;
 
-        _currentChapterIndex = savedChapterIndex
-            .clamp(0, chapters.length - 1)
-            .toInt();
+        _currentChapterIndex =
+            savedChapterIndex
+                .clamp(0, chapters.length - 1)
+                .toInt();
 
         _restoredChapterProgress =
             savedProgress?.chapterProgress ?? 0;
@@ -156,7 +165,8 @@ class _ReaderPageState extends State<ReaderPage>
       }
 
       setState(() {
-        _error = 'Unable to open this book: $error';
+        _error =
+            'Unable to open this book: $error';
         _isLoading = false;
       });
     }
@@ -191,8 +201,8 @@ class _ReaderPageState extends State<ReaderPage>
             return;
           }
 
-          final maximum =
-              _scrollController.position.maxScrollExtent;
+          final maximum = _scrollController
+              .position.maxScrollExtent;
 
           if (maximum <= 0) {
             return;
@@ -202,7 +212,9 @@ class _ReaderPageState extends State<ReaderPage>
               maximum * _restoredChapterProgress;
 
           _scrollController.jumpTo(
-            target.clamp(0.0, maximum).toDouble(),
+            target
+                .clamp(0.0, maximum)
+                .toDouble(),
           );
         },
       );
@@ -240,8 +252,9 @@ class _ReaderPageState extends State<ReaderPage>
       chapterTitle: _chapterTitle(chapter),
       chapterIndex: _currentChapterIndex,
       totalChapters: _chapters.length,
-      chapterProgress: forcedChapterProgress ??
-          _currentScrollProgress(),
+      chapterProgress:
+          forcedChapterProgress ??
+              _currentScrollProgress(),
     );
   }
 
@@ -269,7 +282,8 @@ class _ReaderPageState extends State<ReaderPage>
       _restoredChapterProgress = 0;
     });
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(0);
       }
@@ -284,7 +298,8 @@ class _ReaderPageState extends State<ReaderPage>
     final title = chapter.Title?.trim();
 
     if (title == null || title.isEmpty) {
-      return 'Chapter ${_currentChapterIndex + 1}';
+      return 'Chapter '
+          '${_currentChapterIndex + 1}';
     }
 
     return title;
@@ -313,7 +328,8 @@ class _ReaderPageState extends State<ReaderPage>
         return SafeArea(
           child: SizedBox(
             height:
-                MediaQuery.sizeOf(context).height * 0.72,
+                MediaQuery.sizeOf(context).height *
+                    0.72,
             child: Column(
               children: [
                 Text(
@@ -328,16 +344,20 @@ class _ReaderPageState extends State<ReaderPage>
                 Expanded(
                   child: ListView.builder(
                     itemCount: _chapters.length,
-                    itemBuilder: (context, index) {
+                    itemBuilder:
+                        (context, index) {
                       final selected =
-                          index == _currentChapterIndex;
+                          index ==
+                              _currentChapterIndex;
 
                       return ListTile(
                         selected: selected,
-                        selectedColor: AppColors.gold,
+                        selectedColor:
+                            AppColors.gold,
                         leading: Text(
                           '${index + 1}',
-                          style: AppFonts.metadata(
+                          style:
+                              AppFonts.metadata(
                             context,
                             color: selected
                                 ? AppColors.gold
@@ -360,7 +380,10 @@ class _ReaderPageState extends State<ReaderPage>
                           ),
                         ),
                         onTap: () {
-                          Navigator.of(sheetContext).pop();
+                          Navigator.of(
+                            sheetContext,
+                          ).pop();
+
                           _changeChapter(index);
                         },
                       );
@@ -384,7 +407,8 @@ class _ReaderPageState extends State<ReaderPage>
           builder: (context, setSheetState) {
             return SafeArea(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(
+                padding:
+                    const EdgeInsets.fromLTRB(
                   20,
                   0,
                   20,
@@ -397,7 +421,8 @@ class _ReaderPageState extends State<ReaderPage>
                   children: [
                     Text(
                       'Reading appearance',
-                      style: AppFonts.sectionHeading(
+                      style:
+                          AppFonts.sectionHeading(
                         context,
                         fontSize: 20,
                       ),
@@ -420,7 +445,8 @@ class _ReaderPageState extends State<ReaderPage>
                       ),
                       items: ReadingFontFamily.values
                           .map(
-                            (font) => DropdownMenuItem(
+                            (font) =>
+                                DropdownMenuItem(
                               value: font,
                               child: Text(
                                 font.displayName,
@@ -458,9 +484,11 @@ class _ReaderPageState extends State<ReaderPage>
                             min: 16,
                             max: 28,
                             divisions: 12,
-                            activeColor: AppColors.gold,
-                            label:
-                                _fontSize.round().toString(),
+                            activeColor:
+                                AppColors.gold,
+                            label: _fontSize
+                                .round()
+                                .toString(),
                             onChanged: (value) {
                               setSheetState(() {
                                 _fontSize = value;
@@ -522,7 +550,8 @@ class _ReaderPageState extends State<ReaderPage>
               Text(
                 widget.book.title,
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                overflow:
+                    TextOverflow.ellipsis,
                 style: AppFonts.bookTitle(
                   context,
                   fontSize: 15,
@@ -532,7 +561,8 @@ class _ReaderPageState extends State<ReaderPage>
                 Text(
                   _chapterTitle(chapter),
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  overflow:
+                      TextOverflow.ellipsis,
                   style: AppFonts.metadata(
                     context,
                     fontSize: 11,
@@ -560,26 +590,38 @@ class _ReaderPageState extends State<ReaderPage>
           ],
         ),
         body: _buildBody(context),
-        bottomNavigationBar: chapter == null
-            ? null
-            : _ReaderControls(
-                currentChapter:
-                    _currentChapterIndex,
-                totalChapters: _chapters.length,
-                onContents: _showContents,
-                onPrevious: _currentChapterIndex > 0
-                    ? () => _changeChapter(
-                          _currentChapterIndex - 1,
-                        )
-                    : null,
-                onNext: _currentChapterIndex <
-                        _chapters.length - 1
-                    ? () => _changeChapter(
-                          _currentChapterIndex + 1,
-                        )
-                    : null,
-                onSettings: _showReaderSettings,
-              ),
+        bottomNavigationBar:
+            chapter == null
+                ? null
+                : _ReaderControls(
+                    currentChapter:
+                        _currentChapterIndex,
+                    totalChapters:
+                        _chapters.length,
+                    onContents:
+                        _showContents,
+                    onPrevious:
+                        _currentChapterIndex >
+                                0
+                            ? () =>
+                                _changeChapter(
+                                  _currentChapterIndex -
+                                      1,
+                                )
+                            : null,
+                    onNext:
+                        _currentChapterIndex <
+                                _chapters.length -
+                                    1
+                            ? () =>
+                                _changeChapter(
+                                  _currentChapterIndex +
+                                      1,
+                                )
+                            : null,
+                    onSettings:
+                        _showReaderSettings,
+                  ),
       ),
     );
   }
@@ -624,17 +666,21 @@ class _ReaderPageState extends State<ReaderPage>
 
     if (chapter == null) {
       return const Center(
-        child: Text('No chapter available.'),
+        child: Text(
+          'No chapter available.',
+        ),
       );
     }
 
-    final readingStyle = AppFonts.readingContent(
+    final readingStyle =
+        AppFonts.readingContent(
       context,
       fontFamily: _readingFont,
       fontSize: _fontSize,
     );
 
-    return NotificationListener<ScrollEndNotification>(
+    return NotificationListener<
+        ScrollEndNotification>(
       onNotification: (notification) {
         unawaited(_saveProgress());
         return false;
@@ -642,7 +688,8 @@ class _ReaderPageState extends State<ReaderPage>
       child: SelectionArea(
         child: SingleChildScrollView(
           controller: _scrollController,
-          padding: const EdgeInsets.fromLTRB(
+          padding:
+              const EdgeInsets.fromLTRB(
             24,
             28,
             24,
@@ -664,12 +711,15 @@ class _ReaderPageState extends State<ReaderPage>
               const _ChapterDivider(),
               const SizedBox(height: 18),
               Html(
-                data: chapter.HtmlContent ?? '',
+                data:
+                    chapter.HtmlContent ?? '',
                 style: {
-                  'html': Style.fromTextStyle(
+                  'html':
+                      Style.fromTextStyle(
                     readingStyle,
                   ),
-                  'body': Style.fromTextStyle(
+                  'body':
+                      Style.fromTextStyle(
                     readingStyle,
                   ),
                   'p': Style.fromTextStyle(
@@ -685,7 +735,8 @@ class _ReaderPageState extends State<ReaderPage>
   }
 }
 
-class _ChapterDivider extends StatelessWidget {
+class _ChapterDivider
+    extends StatelessWidget {
   const _ChapterDivider();
 
   @override
@@ -719,7 +770,8 @@ class _ChapterDivider extends StatelessWidget {
   }
 }
 
-class _ReaderControls extends StatelessWidget {
+class _ReaderControls
+    extends StatelessWidget {
   const _ReaderControls({
     required this.currentChapter,
     required this.totalChapters,
@@ -743,7 +795,9 @@ class _ReaderControls extends StatelessWidget {
 
     final percentage = totalChapters <= 0
         ? 0
-        : (((currentChapter + 1) / totalChapters) * 100)
+        : (((currentChapter + 1) /
+                    totalChapters) *
+                100)
             .round();
 
     return Material(
@@ -765,7 +819,8 @@ class _ReaderControls extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: 'Previous chapter',
+                tooltip:
+                    'Previous chapter',
                 onPressed: onPrevious,
                 icon: const Icon(
                   Icons.chevron_left,
@@ -786,7 +841,8 @@ class _ReaderControls extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: 'Reader settings',
+                tooltip:
+                    'Reader settings',
                 onPressed: onSettings,
                 icon: const Icon(
                   Icons.settings_outlined,

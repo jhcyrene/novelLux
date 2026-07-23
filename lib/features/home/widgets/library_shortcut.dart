@@ -27,6 +27,9 @@ class LibraryShortcutSection extends StatelessWidget {
   final VoidCallback onFavorites;
   final VoidCallback onBookmarks;
   final VoidCallback onRecent;
+  static const double cardHeight = 100;
+  static const double iconSize = 20;
+  static const double verticalPadding = 10;
 
   @override
   Widget build(BuildContext context) {
@@ -91,6 +94,7 @@ class LibraryShortcutSection extends StatelessWidget {
                 label: 'Bookmarks',
                 count: bookmarkCount,
                 onTap: onBookmarks,
+                
               ),
             ),
             const SizedBox(width: 10),
@@ -115,6 +119,7 @@ class _LibraryShortcutCard extends StatelessWidget {
     required this.label,
     required this.count,
     required this.onTap,
+    
   });
 
   final IconData icon;
@@ -133,7 +138,7 @@ class _LibraryShortcutCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(
-          height: 86,
+          height: LibraryShortcutSection.cardHeight,
           padding: const EdgeInsets.symmetric(
             horizontal: 6,
             vertical: 10,
@@ -151,7 +156,7 @@ class _LibraryShortcutCard extends StatelessWidget {
             children: [
               Icon(
                 icon,
-                size: 27,
+                size: 25.0,
                 color: AppColors.gold,
               ),
               const SizedBox(height: 8),

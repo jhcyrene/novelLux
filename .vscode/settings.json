@@ -1,5 +1,9 @@
 {
   "files.autoSave": "afterDelay",
   "files.autoSaveDelay": 1000,
-  "dart.flutterHotReloadOnSave": "all"
+  "dart.flutterHotReloadOnSave": "all",
+  "editor.defaultFormatter": "Dart-Code.flutter",
+  "workbench.colorTheme": "Dark Modern",
+  "editor.mouseWheelZoom": true,
+  "editor.formatOnPaste": true
 }

@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:epubx/epubx.dart';
 import 'package:flutter/material.dart';
@@ -6,10 +6,19 @@ import 'package:path/path.dart' as path;
 
 import '../models/book_metadata.dart';
 import '../services/epub_picker.dart';
+import '../storage/book_storage.dart';
+import '../storage/book_storage_contract.dart';
 
-class TemporaryLibraryProvider extends ChangeNotifier {
+class TemporaryLibraryProvider
+    extends ChangeNotifier {
+  TemporaryLibraryProvider({
+    BookStorage? storage,
+  }) : _storage = storage ?? createBookStorage();
+
+  final BookStorage _storage;
   final List<BookMetadata> _books = [];
 
+  bool _isInitialized = false;
   bool _isLoading = false;
   String? _error;
 
@@ -20,14 +29,49 @@ class TemporaryLibraryProvider extends ChangeNotifier {
 
   String? get error => _error;
 
-  Future<void> uploadEpub(BuildContext context) async {
-    final savedFile =
-        await EpubPickerService.pickAndSaveEpub(
-      context,
-    );
+  Future<void> uploadEpub(
+    BuildContext context,
+  ) async {
+    try {
+      final selectedBook =
+          await EpubPickerService.pickEpub();
 
-    if (savedFile != null) {
+      if (selectedBook == null) {
+        return;
+      }
+
+      await _ensureInitialized();
+
+      final storedBook = await _storage.saveEpub(
+        originalName: selectedBook.name,
+        bytes: selectedBook.bytes,
+      );
+
       await loadBooks();
+
+      if (!context.mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${storedBook.name} is available temporarily.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unable to import EPUB: $error',
+          ),
+        ),
+      );
     }
   }
 
@@ -37,48 +81,46 @@ class TemporaryLibraryProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final booksDirectory =
-          await EpubPickerService.getBooksDirectory();
+      await _ensureInitialized();
+
+      final storedBooks =
+          await _storage.listBooks();
 
       final loadedBooks = <BookMetadata>[];
 
-      await for (final entity in booksDirectory.list()) {
-        if (entity is! File) {
-          continue;
-        }
-
-        if (path.extension(entity.path).toLowerCase() !=
-            '.epub') {
-          continue;
-        }
-
+      for (final storedBook in storedBooks) {
         try {
-          final bytes = await entity.readAsBytes();
+          final bytes = await _storage.readBytes(
+            storedBook.id,
+          );
 
-          // Reads metadata without loading all chapters,
-          // images, CSS, and fonts.
           final epubReference =
               await EpubReader.openBook(bytes);
 
-          final title = epubReference.Title?.trim();
-          final author = epubReference.Author?.trim();
+          final title =
+              epubReference.Title?.trim();
+          final author =
+              epubReference.Author?.trim();
 
           loadedBooks.add(
             BookMetadata(
-              id: path.basename(entity.path),
-              filePath: entity.path,
+              id: storedBook.id,
+              filePath: storedBook.name,
               title: title?.isNotEmpty == true
                   ? title!
-                  : _filenameWithoutHash(entity.path),
+                  : path.basenameWithoutExtension(
+                      storedBook.name,
+                    ),
               author: author?.isNotEmpty == true
                   ? author!
                   : 'Unknown author',
-              fileSize: await entity.length(),
+              fileSize: storedBook.size,
             ),
           );
         } catch (error) {
           debugPrint(
-            'Unable to read ${entity.path}: $error',
+            'Unable to read ${storedBook.name}: '
+            '$error',
           );
         }
       }
@@ -99,16 +141,26 @@ class TemporaryLibraryProvider extends ChangeNotifier {
     }
   }
 
-  String _filenameWithoutHash(String filePath) {
-    final filename =
-        path.basenameWithoutExtension(filePath);
+  Future<Uint8List> readBookBytes(
+    String bookId,
+  ) async {
+    await _ensureInitialized();
 
-    final separator = filename.indexOf('_');
+    return _storage.readBytes(bookId);
+  }
 
-    if (separator == -1) {
-      return filename;
+  Future<void> deleteBook(String bookId) async {
+    await _ensureInitialized();
+    await _storage.deleteBook(bookId);
+    await loadBooks();
+  }
+
+  Future<void> _ensureInitialized() async {
+    if (_isInitialized) {
+      return;
     }
 
-    return filename.substring(separator + 1);
+    await _storage.initialize();
+    _isInitialized = true;
   }
 }

@@ -59,7 +59,7 @@ class ContinueReadingSection extends StatelessWidget {
                 'View all',
                 style: AppFonts.button(
                   context,
-                  fontSize: 12,
+                  fontSize: 13,
                   color: AppColors.gold,
                 ),
               ),
