@@ -1,4 +1,3 @@
-import 'dart:collection';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -6,9 +5,9 @@ import 'package:path/path.dart' as path;
 
 import 'book_storage_contract.dart';
 
-class PlatformBookStorage implements BookStorage { // for browser
-  final Map<String, _MemoryBook> _books =
-      LinkedHashMap<String, _MemoryBook>();
+class PlatformBookStorage implements BookStorage {
+  // Browser storage intentionally lasts only for the current app session.
+  final Map<String, _MemoryBook> _books = <String, _MemoryBook>{};
 
   @override
   Future<void> initialize() async {
@@ -16,7 +15,7 @@ class PlatformBookStorage implements BookStorage { // for browser
   }
 
   @override
-  Future<StoredBookFile> saveEpub({
+  Future<StoredBookFile> saveBook({
     required String originalName,
     required Uint8List bytes,
   }) async {
@@ -47,13 +46,10 @@ class PlatformBookStorage implements BookStorage { // for browser
 
   @override
   Future<List<StoredBookFile>> listBooks() async {
-    final books = _books.values
-        .map((book) => book.file)
-        .toList();
+    final books = _books.values.map((book) => book.file).toList();
 
     books.sort(
-      (first, second) =>
-          first.importedAt.compareTo(second.importedAt),
+      (first, second) => first.importedAt.compareTo(second.importedAt),
     );
 
     return books;
@@ -64,9 +60,7 @@ class PlatformBookStorage implements BookStorage { // for browser
     final book = _books[id];
 
     if (book == null) {
-      throw StateError(
-        'The EPUB is no longer available in browser memory.',
-      );
+      throw StateError('The book is no longer available in browser memory.');
     }
 
     return Uint8List.fromList(book.bytes);
@@ -78,18 +72,12 @@ class PlatformBookStorage implements BookStorage { // for browser
   }
 
   String _sanitizeFilename(String filename) {
-    return path.basename(filename).replaceAll(
-          RegExp(r'[^a-zA-Z0-9._ -]'),
-          '_',
-        );
+    return path.basename(filename).replaceAll(RegExp(r'[^a-zA-Z0-9._ -]'), '_');
   }
 }
 
 class _MemoryBook {
-  const _MemoryBook({
-    required this.file,
-    required this.bytes,
-  });
+  const _MemoryBook({required this.file, required this.bytes});
 
   final StoredBookFile file;
   final Uint8List bytes;

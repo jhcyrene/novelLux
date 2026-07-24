@@ -6,27 +6,32 @@ import '../../core/models/book_metadata.dart';
 import '../../core/provider/metadata_provider.dart';
 import '../../core/provider/reading_progress_provider.dart';
 import 'widgets/continue_reading_section.dart';
+import 'widgets/recently_added.dart';
+import 'widgets/welcome_tab.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({
     super.key,
     required this.onViewLibrary,
     required this.onOpenReader,
+    required this.onOpenBook,
+    required this.onAddBook,
   });
 
   final VoidCallback onViewLibrary;
   final ValueChanged<BookMetadata> onOpenReader;
+  final ValueChanged<BookMetadata> onOpenBook;
+  final VoidCallback onAddBook;
 
   @override
   Widget build(BuildContext context) {
-    final library =
-        context.watch<TemporaryLibraryProvider>();
+    final library = context.watch<TemporaryLibraryProvider>();
 
-    final readingHistory =
-        context.watch<ReadingProgressProvider>();
+    final readingHistory = context.watch<ReadingProgressProvider>();
 
-    final latestProgress =
-        readingHistory.mostRecent;
+    final latestProgress = readingHistory.mostRecent;
+
+    final recentlyAddedBooks = library.books.take(10).toList(growable: false);
 
     BookMetadata? currentBook;
 
@@ -40,18 +45,14 @@ class HomePage extends StatelessWidget {
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        16,
-        14,
-        16,
-        24,
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
       children: [
+        WelcomeTab(totalBooks: library.books.length),
+        const SizedBox(height: 22),
         ContinueReadingSection(
+          isLoading: library.isLoading || readingHistory.isLoading,
           book: currentBook,
-          progress: currentBook == null
-              ? null
-              : latestProgress,
+          progress: currentBook == null ? null : latestProgress,
           onViewAll: onViewLibrary,
           onOpenLibrary: onViewLibrary,
           onContinueReading: () {
@@ -59,11 +60,7 @@ class HomePage extends StatelessWidget {
               onOpenReader(currentBook);
             }
           },
-          onAddBook: () async {
-            await context
-                .read<TemporaryLibraryProvider>()
-                .uploadEpub(context);
-          },
+          onAddBook: onAddBook,
         ),
         const SizedBox(height: 22),
         LibraryShortcutSection(
@@ -76,6 +73,13 @@ class HomePage extends StatelessWidget {
           onFavorites: onViewLibrary,
           onBookmarks: onViewLibrary,
           onRecent: onViewLibrary,
+        ),
+        const SizedBox(height: 22),
+        RecentlyAddedSection(
+          isLoading: library.isLoading,
+          books: recentlyAddedBooks,
+          onViewAll: onViewLibrary,
+          onOpenBook: onOpenBook,
         ),
       ],
     );

@@ -5,6 +5,21 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Android",
+            "type": "dart",
+            "request": "launch",
+            "program": "lib/main.dart",
+            "deviceId": "10HC1D0P9T00308"
+        },
+        {
+        "name": "Chrome Web",
+        "request": "launch",
+        "type": "dart",
+        "deviceId": "chrome"
+        }
+        
+        ,
+        {
             "name": "Flutter: Attach to Device",
             "type": "dart",
             "request": "attach"
@@ -37,6 +52,13 @@
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"
+        },
+
+    ],
+    "compounds": [
+        {
+            "name": "Chrome and Android",
+        "configurations": ["Android", "Chrome Web"] 
         },
     ]
 }

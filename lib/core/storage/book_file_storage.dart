@@ -16,15 +16,10 @@ class PlatformBookStorage implements BookStorage {
       return;
     }
 
-    final temporaryDirectory =
-        await getTemporaryDirectory();
+    final temporaryDirectory = await getTemporaryDirectory();
 
     final booksDirectory = Directory(
-      path.join(
-        temporaryDirectory.path,
-        'NovelLux',
-        'books',
-      ),
+      path.join(temporaryDirectory.path, 'NovelLux', 'books'),
     );
 
     if (!await booksDirectory.exists()) {
@@ -35,7 +30,7 @@ class PlatformBookStorage implements BookStorage {
   }
 
   @override
-  Future<StoredBookFile> saveEpub({
+  Future<StoredBookFile> saveBook({
     required String originalName,
     required Uint8List bytes,
   }) async {
@@ -45,15 +40,10 @@ class PlatformBookStorage implements BookStorage {
     final safeName = _sanitizeFilename(originalName);
     final id = '${hash}_$safeName';
 
-    final file = File(
-      path.join(_booksDirectory!.path, id),
-    );
+    final file = File(path.join(_booksDirectory!.path, id));
 
     if (!await file.exists()) {
-      await file.writeAsBytes(
-        bytes,
-        flush: true,
-      );
+      await file.writeAsBytes(bytes, flush: true);
     }
 
     final statistics = await file.stat();
@@ -72,14 +62,17 @@ class PlatformBookStorage implements BookStorage {
 
     final books = <StoredBookFile>[];
 
-    await for (final entity
-        in _booksDirectory!.list()) {
+    await for (final entity in _booksDirectory!.list()) {
       if (entity is! File) {
         continue;
       }
 
-      if (path.extension(entity.path).toLowerCase() !=
-          '.epub') {
+      if (!const {
+        '.epub',
+        '.html',
+        '.htm',
+        '.txt',
+      }.contains(path.extension(entity.path).toLowerCase())) {
         continue;
       }
 
@@ -97,8 +90,7 @@ class PlatformBookStorage implements BookStorage {
     }
 
     books.sort(
-      (first, second) =>
-          first.importedAt.compareTo(second.importedAt),
+      (first, second) => first.importedAt.compareTo(second.importedAt),
     );
 
     return books;
@@ -114,14 +106,10 @@ class PlatformBookStorage implements BookStorage {
       throw ArgumentError('Invalid book identifier.');
     }
 
-    final file = File(
-      path.join(_booksDirectory!.path, safeId),
-    );
+    final file = File(path.join(_booksDirectory!.path, safeId));
 
     if (!await file.exists()) {
-      throw StateError(
-        'The EPUB file is no longer available.',
-      );
+      throw StateError('The book file is no longer available.');
     }
 
     return file.readAsBytes();
@@ -137,9 +125,7 @@ class PlatformBookStorage implements BookStorage {
       throw ArgumentError('Invalid book identifier.');
     }
 
-    final file = File(
-      path.join(_booksDirectory!.path, safeId),
-    );
+    final file = File(path.join(_booksDirectory!.path, safeId));
 
     if (await file.exists()) {
       await file.delete();
@@ -157,9 +143,6 @@ class PlatformBookStorage implements BookStorage {
   }
 
   String _sanitizeFilename(String filename) {
-    return path.basename(filename).replaceAll(
-          RegExp(r'[^a-zA-Z0-9._ -]'),
-          '_',
-        );
+    return path.basename(filename).replaceAll(RegExp(r'[^a-zA-Z0-9._ -]'), '_');
   }
 }

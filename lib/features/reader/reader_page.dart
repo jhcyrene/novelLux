@@ -1,54 +1,55 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:epubx/epubx.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_html/flutter_html.dart';
+import 'package:path/path.dart' as path;
 import 'package:provider/provider.dart';
 
 import '../../core/models/book_metadata.dart';
 import '../../core/provider/metadata_provider.dart';
 import '../../core/provider/reading_progress_provider.dart';
+import '../../core/services/plain_text_novel_parser.dart';
 import '../../core/theme/app_font.dart';
-import '../../core/theme/app_theme.dart';
+import 'widgets/contents_sheet.dart';
+import 'widgets/reader_content.dart';
+import 'widgets/reader_controls.dart';
+import 'widgets/reader_status.dart';
+import 'widgets/settings.dart';
+import 'widgets/topbar.dart';
 
 class ReaderPage extends StatefulWidget {
-  const ReaderPage({
-    super.key,
-    required this.book,
-  });
+  const ReaderPage({super.key, required this.book});
 
   final BookMetadata book;
 
   @override
-  State<ReaderPage> createState() =>
-      _ReaderPageState();
+  State<ReaderPage> createState() => _ReaderPageState();
 }
 
-class _ReaderPageState extends State<ReaderPage>
-    with WidgetsBindingObserver {
-  bool _isClosing = false;
-  bool _didStartLoading = false;
-
-  final ScrollController _scrollController =
-      ScrollController();
+class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
+  final ScrollController _scrollController = ScrollController();
+  final ValueNotifier<double> _liveReadingProgress = ValueNotifier(0);
 
   late ReadingProgressProvider _progressProvider;
   late TemporaryLibraryProvider _libraryProvider;
 
-  List<EpubChapter> _chapters = [];
-
+  List<_ReaderChapter> _chapters = [];
+  String _chapterHtml = '';
+  int _chapterLoadRequest = 0;
   int _currentChapterIndex = 0;
   double _restoredChapterProgress = 0;
 
+  bool _isClosing = false;
+  bool _didStartLoading = false;
   bool _isLoading = true;
+  bool _isBookmarked = false;
   String? _error;
 
-  ReadingFontFamily _readingFont =
-      AppFonts.defaultReadingFont;
+  ReadingFontFamily _readingFont = AppFonts.defaultReadingFont;
+  double _fontSize = 16;
 
-  double _fontSize = 20;
-
-  EpubChapter? get _currentChapter {
+  _ReaderChapter? get _currentChapter {
     if (_chapters.isEmpty) {
       return null;
     }
@@ -59,19 +60,15 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void initState() {
     super.initState();
-
     WidgetsBinding.instance.addObserver(this);
+    _scrollController.addListener(_updateLiveReadingProgress);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-
-    _progressProvider =
-        context.read<ReadingProgressProvider>();
-
-    _libraryProvider =
-        context.read<TemporaryLibraryProvider>();
+    _progressProvider = context.read<ReadingProgressProvider>();
+    _libraryProvider = context.read<TemporaryLibraryProvider>();
 
     if (!_didStartLoading) {
       _didStartLoading = true;
@@ -80,9 +77,7 @@ class _ReaderPageState extends State<ReaderPage>
   }
 
   @override
-  void didChangeAppLifecycleState(
-    AppLifecycleState state,
-  ) {
+  void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
@@ -93,8 +88,9 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scrollController.removeListener(_updateLiveReadingProgress);
     _scrollController.dispose();
-
+    _liveReadingProgress.dispose();
     super.dispose();
   }
 
@@ -105,40 +101,15 @@ class _ReaderPageState extends State<ReaderPage>
     });
 
     try {
-      final bytes =
-          await _libraryProvider.readBookBytes(
-        widget.book.id,
-      );
-
-      final epubBook =
-          await EpubReader.readBook(bytes);
-
-      final chapters = <EpubChapter>[];
-
-      _flattenChapters(
-        epubBook.Chapters ?? const [],
-        chapters,
-      );
-
-      chapters.removeWhere(
-        (chapter) =>
-            chapter.HtmlContent == null ||
-            chapter.HtmlContent!.trim().isEmpty,
-      );
+      final bytes = await _libraryProvider.readBookBytes(widget.book.id);
+      final chapters = await _readChapters(bytes);
 
       if (chapters.isEmpty) {
-        throw Exception(
-          'No readable chapters were found.',
-        );
+        throw Exception('No readable chapters were found.');
       }
 
-      final savedProgress =
-          _progressProvider.progressFor(
-        widget.book.id,
-      );
-
-      final savedChapterIndex =
-          savedProgress?.chapterIndex ?? 0;
+      final savedProgress = _progressProvider.progressFor(widget.book.id);
+      final savedChapterIndex = savedProgress?.chapterIndex ?? 0;
 
       if (!mounted) {
         return;
@@ -146,79 +117,202 @@ class _ReaderPageState extends State<ReaderPage>
 
       setState(() {
         _chapters = chapters;
-
-        _currentChapterIndex =
-            savedChapterIndex
-                .clamp(0, chapters.length - 1)
-                .toInt();
-
-        _restoredChapterProgress =
-            savedProgress?.chapterProgress ?? 0;
-
-        _isLoading = false;
+        _currentChapterIndex = savedChapterIndex
+            .clamp(0, chapters.length - 1)
+            .toInt();
+        _restoredChapterProgress = savedProgress?.chapterProgress ?? 0;
+        _chapterHtml = '';
       });
 
-      _restoreScrollPosition();
+      _setLiveReadingProgress(_restoredChapterProgress);
+      await _loadCurrentChapter(restorePosition: true);
     } catch (error) {
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _error =
-            'Unable to open this book: $error';
+        _error = 'Unable to open this book: $error';
         _isLoading = false;
       });
     }
   }
 
-  void _flattenChapters(
-    List<EpubChapter> source,
-    List<EpubChapter> destination,
+  Future<List<_ReaderChapter>> _readChapters(List<int> bytes) async {
+    final extension = path.extension(widget.book.filePath).toLowerCase();
+
+    if (extension == '.epub') {
+      final epubBook = await EpubReader.openBook(bytes);
+      final chapterReferences = <EpubChapterRef>[];
+      final chapters = <_ReaderChapter>[];
+
+      _flattenChapterReferences(
+        await epubBook.getChapters(),
+        chapterReferences,
+      );
+      chapterReferences.removeWhere(
+        (chapter) => chapter.epubTextContentFileRef == null,
+      );
+
+      for (var index = 0; index < chapterReferences.length; index++) {
+        final chapter = chapterReferences[index];
+        final nextFileName = index + 1 < chapterReferences.length
+            ? chapterReferences[index + 1].ContentFileName
+            : null;
+
+        chapters.add(
+          _ReaderChapter(
+            title: chapter.Title,
+            loadContent: () => _readEpubChapterHtml(
+              epubBook,
+              chapter,
+              nextContentFileName: nextFileName,
+            ),
+          ),
+        );
+      }
+
+      return chapters;
+    }
+
+    if (extension == '.html' || extension == '.htm') {
+      final html = utf8.decode(bytes, allowMalformed: true);
+      return [
+        _ReaderChapter(title: widget.book.title, loadContent: () async => html),
+      ];
+    }
+
+    if (extension == '.txt') {
+      final text = utf8.decode(bytes, allowMalformed: true);
+      final novel = PlainTextNovelParser.parse(text);
+
+      return [
+        for (final chapter in novel.chapters)
+          _ReaderChapter(
+            title: chapter.title,
+            loadContent: () async =>
+                PlainTextNovelParser.chapterToHtml(chapter.content),
+          ),
+      ];
+    }
+
+    throw UnsupportedError('Unsupported novel format: $extension');
+  }
+
+  void _flattenChapterReferences(
+    List<EpubChapterRef> source,
+    List<EpubChapterRef> destination,
   ) {
     for (final chapter in source) {
       destination.add(chapter);
 
       final subChapters = chapter.SubChapters;
-
-      if (subChapters != null &&
-          subChapters.isNotEmpty) {
-        _flattenChapters(
-          subChapters,
-          destination,
-        );
+      if (subChapters != null && subChapters.isNotEmpty) {
+        _flattenChapterReferences(subChapters, destination);
       }
+    }
+  }
+
+  Future<bool> _loadCurrentChapter({required bool restorePosition}) async {
+    final chapter = _currentChapter;
+    if (chapter == null) {
+      return false;
+    }
+
+    final request = ++_chapterLoadRequest;
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final html = await chapter.loadContent();
+
+      if (!mounted || request != _chapterLoadRequest) {
+        return false;
+      }
+
+      if (html.trim().isEmpty) {
+        throw Exception('This chapter has no readable content.');
+      }
+
+      setState(() {
+        _chapterHtml = html;
+        _isLoading = false;
+      });
+
+      if (restorePosition) {
+        _restoreScrollPosition();
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollController.jumpTo(0);
+          }
+          _updateLiveReadingProgress();
+        });
+      }
+
+      return true;
+    } catch (error) {
+      if (!mounted || request != _chapterLoadRequest) {
+        return false;
+      }
+
+      setState(() {
+        _error = 'Unable to load this chapter: $error';
+        _isLoading = false;
+      });
+      return false;
     }
   }
 
   void _restoreScrollPosition() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future<void>.delayed(
-        const Duration(milliseconds: 250),
-        () {
-          if (!mounted ||
-              !_scrollController.hasClients) {
-            return;
-          }
+      Future<void>.delayed(const Duration(milliseconds: 250), () {
+        if (!mounted || !_scrollController.hasClients) {
+          return;
+        }
 
-          final maximum = _scrollController
-              .position.maxScrollExtent;
+        final maximum = _scrollController.position.maxScrollExtent;
+        if (maximum <= 0) {
+          return;
+        }
 
-          if (maximum <= 0) {
-            return;
-          }
-
-          final target =
-              maximum * _restoredChapterProgress;
-
-          _scrollController.jumpTo(
-            target
-                .clamp(0.0, maximum)
-                .toDouble(),
-          );
-        },
-      );
+        final target = maximum * _restoredChapterProgress;
+        _scrollController.jumpTo(target.clamp(0.0, maximum).toDouble());
+        _updateLiveReadingProgress();
+      });
     });
+  }
+
+  void _updateLiveReadingProgress() {
+    _setLiveReadingProgress(_currentScrollProgress());
+  }
+
+  void _refreshProgressAfterLayout() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _updateLiveReadingProgress();
+      }
+    });
+  }
+
+  void _setLiveReadingProgress(double chapterProgress) {
+    if (_chapters.isEmpty) {
+      _liveReadingProgress.value = 0;
+      return;
+    }
+
+    final overallProgress =
+        (_currentChapterIndex + chapterProgress) / _chapters.length;
+    final normalized = overallProgress.clamp(0.0, 1.0).toDouble();
+    final currentPercentage = (_liveReadingProgress.value * 100).round();
+    final nextPercentage = (normalized * 100).round();
+
+    if (currentPercentage != nextPercentage) {
+      _liveReadingProgress.value = normalized;
+    }
   }
 
   double _currentScrollProgress() {
@@ -230,17 +324,13 @@ class _ReaderPageState extends State<ReaderPage>
     final maximum = position.maxScrollExtent;
 
     if (maximum <= 0) {
-      return 0;
+      return 1;
     }
 
-    return (position.pixels / maximum)
-        .clamp(0.0, 1.0)
-        .toDouble();
+    return (position.pixels / maximum).clamp(0.0, 1.0).toDouble();
   }
 
-  Future<void> _saveProgress({
-    double? forcedChapterProgress,
-  }) async {
+  Future<void> _saveProgress({double? forcedChapterProgress}) async {
     final chapter = _currentChapter;
 
     if (chapter == null || _chapters.isEmpty) {
@@ -252,9 +342,7 @@ class _ReaderPageState extends State<ReaderPage>
       chapterTitle: _chapterTitle(chapter),
       chapterIndex: _currentChapterIndex,
       totalChapters: _chapters.length,
-      chapterProgress:
-          forcedChapterProgress ??
-              _currentScrollProgress(),
+      chapterProgress: forcedChapterProgress ?? _currentScrollProgress(),
     );
   }
 
@@ -265,13 +353,8 @@ class _ReaderPageState extends State<ReaderPage>
       return;
     }
 
-    final movingForward =
-        index > _currentChapterIndex;
-
-    await _saveProgress(
-      forcedChapterProgress:
-          movingForward ? 1 : null,
-    );
+    final movingForward = index > _currentChapterIndex;
+    await _saveProgress(forcedChapterProgress: movingForward ? 1 : null);
 
     if (!mounted) {
       return;
@@ -280,26 +363,21 @@ class _ReaderPageState extends State<ReaderPage>
     setState(() {
       _currentChapterIndex = index;
       _restoredChapterProgress = 0;
+      _chapterHtml = '';
     });
+    _setLiveReadingProgress(0);
 
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-      }
-    });
-
-    await _saveProgress(
-      forcedChapterProgress: 0,
-    );
+    final loaded = await _loadCurrentChapter(restorePosition: false);
+    if (loaded) {
+      await _saveProgress(forcedChapterProgress: 0);
+    }
   }
 
-  String _chapterTitle(EpubChapter chapter) {
-    final title = chapter.Title?.trim();
+  String _chapterTitle(_ReaderChapter chapter, {int? index}) {
+    final title = chapter.title?.trim();
 
     if (title == null || title.isEmpty) {
-      return 'Chapter '
-          '${_currentChapterIndex + 1}';
+      return 'Chapter ${(index ?? _currentChapterIndex) + 1}';
     }
 
     return title;
@@ -311,7 +389,6 @@ class _ReaderPageState extends State<ReaderPage>
     }
 
     _isClosing = true;
-
     await _saveProgress();
 
     if (mounted) {
@@ -325,74 +402,16 @@ class _ReaderPageState extends State<ReaderPage>
       isScrollControlled: true,
       showDragHandle: true,
       builder: (sheetContext) {
-        return SafeArea(
-          child: SizedBox(
-            height:
-                MediaQuery.sizeOf(context).height *
-                    0.72,
-            child: Column(
-              children: [
-                Text(
-                  'Contents',
-                  style: AppFonts.sectionHeading(
-                    context,
-                    fontSize: 20,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _chapters.length,
-                    itemBuilder:
-                        (context, index) {
-                      final selected =
-                          index ==
-                              _currentChapterIndex;
-
-                      return ListTile(
-                        selected: selected,
-                        selectedColor:
-                            AppColors.gold,
-                        leading: Text(
-                          '${index + 1}',
-                          style:
-                              AppFonts.metadata(
-                            context,
-                            color: selected
-                                ? AppColors.gold
-                                : null,
-                          ),
-                        ),
-                        title: Text(
-                          _chapterTitle(
-                            _chapters[index],
-                          ),
-                          maxLines: 2,
-                          overflow:
-                              TextOverflow.ellipsis,
-                          style: AppFonts.body(
-                            context,
-                            fontSize: 14,
-                            color: selected
-                                ? AppColors.gold
-                                : null,
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.of(
-                            sheetContext,
-                          ).pop();
-
-                          _changeChapter(index);
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
+        return ReaderContentsSheet(
+          chapterTitles: [
+            for (var index = 0; index < _chapters.length; index++)
+              _chapterTitle(_chapters[index], index: index),
+          ],
+          currentChapter: _currentChapterIndex,
+          onChapterSelected: (index) {
+            Navigator.of(sheetContext).pop();
+            unawaited(_changeChapter(index));
+          },
         );
       },
     );
@@ -405,113 +424,27 @@ class _ReaderPageState extends State<ReaderPage>
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding:
-                    const EdgeInsets.fromLTRB(
-                  20,
-                  0,
-                  20,
-                  20,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Reading appearance',
-                      style:
-                          AppFonts.sectionHeading(
-                        context,
-                        fontSize: 20,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      'Font',
-                      style: AppFonts.body(
-                        context,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    DropdownButtonFormField<
-                        ReadingFontFamily>(
-                      initialValue: _readingFont,
-                      decoration:
-                          const InputDecoration(
-                        isDense: true,
-                      ),
-                      items: ReadingFontFamily.values
-                          .map(
-                            (font) =>
-                                DropdownMenuItem(
-                              value: font,
-                              child: Text(
-                                font.displayName,
-                              ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (font) {
-                        if (font == null) {
-                          return;
-                        }
-
-                        setSheetState(() {
-                          _readingFont = font;
-                        });
-
-                        setState(() {
-                          _readingFont = font;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Text(
-                          'A',
-                          style: AppFonts.body(
-                            context,
-                            fontSize: 14,
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            value: _fontSize,
-                            min: 16,
-                            max: 28,
-                            divisions: 12,
-                            activeColor:
-                                AppColors.gold,
-                            label: _fontSize
-                                .round()
-                                .toString(),
-                            onChanged: (value) {
-                              setSheetState(() {
-                                _fontSize = value;
-                              });
-
-                              setState(() {
-                                _fontSize = value;
-                              });
-                            },
-                          ),
-                        ),
-                        Text(
-                          'A',
-                          style: AppFonts.body(
-                            context,
-                            fontSize: 24,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+            return ReaderSettingsSheet(
+              readingFont: _readingFont,
+              fontSize: _fontSize,
+              onFontChanged: (font) {
+                setSheetState(() {
+                  _readingFont = font;
+                });
+                setState(() {
+                  _readingFont = font;
+                });
+                _refreshProgressAfterLayout();
+              },
+              onFontSizeChanged: (fontSize) {
+                setSheetState(() {
+                  _fontSize = fontSize;
+                });
+                setState(() {
+                  _fontSize = fontSize;
+                });
+                _refreshProgressAfterLayout();
+              },
             );
           },
         );
@@ -522,336 +455,242 @@ class _ReaderPageState extends State<ReaderPage>
   @override
   Widget build(BuildContext context) {
     final chapter = _currentChapter;
+    final chapterTitle = chapter == null ? null : _chapterTitle(chapter);
 
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (
-        didPop,
-        result,
-      ) {
-        if (didPop) {
-          return;
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          unawaited(_closeReader());
         }
-
-        unawaited(_closeReader());
       },
       child: Scaffold(
-        appBar: AppBar(
-          leading: IconButton(
-            onPressed: _closeReader,
-            icon: const Icon(
-              Icons.arrow_back_ios_new,
-              size: 20,
-            ),
-          ),
-          centerTitle: true,
-          title: Column(
-            children: [
-              Text(
-                widget.book.title,
-                maxLines: 1,
-                overflow:
-                    TextOverflow.ellipsis,
-                style: AppFonts.bookTitle(
-                  context,
-                  fontSize: 15,
-                ),
-              ),
-              if (chapter != null)
-                Text(
-                  _chapterTitle(chapter),
-                  maxLines: 1,
-                  overflow:
-                      TextOverflow.ellipsis,
-                  style: AppFonts.metadata(
-                    context,
-                    fontSize: 11,
-                  ),
-                ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              onPressed: () {
-                // Add bookmark later.
-              },
-              icon: const Icon(
-                Icons.bookmark_border,
-              ),
-            ),
-            IconButton(
-              onPressed: () {
-                // More actions later.
-              },
-              icon: const Icon(
-                Icons.more_vert,
-              ),
-            ),
-          ],
+        appBar: ReaderTopBar(
+          bookTitle: widget.book.title,
+          chapterTitle: chapterTitle,
+          isBookmarked: _isBookmarked,
+          onBack: () => unawaited(_closeReader()),
+          onBookmark: () {
+            setState(() {
+              _isBookmarked = !_isBookmarked;
+            });
+          },
+          onMore: () {
+            // Additional reader actions can be connected here.
+          },
         ),
-        body: _buildBody(context),
-        bottomNavigationBar:
-            chapter == null
-                ? null
-                : _ReaderControls(
-                    currentChapter:
-                        _currentChapterIndex,
-                    totalChapters:
-                        _chapters.length,
-                    onContents:
-                        _showContents,
-                    onPrevious:
-                        _currentChapterIndex >
-                                0
-                            ? () =>
-                                _changeChapter(
-                                  _currentChapterIndex -
-                                      1,
-                                )
-                            : null,
-                    onNext:
-                        _currentChapterIndex <
-                                _chapters.length -
-                                    1
-                            ? () =>
-                                _changeChapter(
-                                  _currentChapterIndex +
-                                      1,
-                                )
-                            : null,
-                    onSettings:
-                        _showReaderSettings,
-                  ),
+        body: _buildBody(),
+        bottomNavigationBar: chapter == null
+            ? null
+            : ReaderControls(
+                readingProgress: _liveReadingProgress,
+                onContents: _showContents,
+                onStart: !_isLoading && _currentChapterIndex > 0
+                    ? () => unawaited(_changeChapter(0))
+                    : null,
+                onPrevious: !_isLoading && _currentChapterIndex > 0
+                    ? () => unawaited(_changeChapter(_currentChapterIndex - 1))
+                    : null,
+                onNext:
+                    !_isLoading && _currentChapterIndex < _chapters.length - 1
+                    ? () => unawaited(_changeChapter(_currentChapterIndex + 1))
+                    : null,
+                onEnd:
+                    !_isLoading && _currentChapterIndex < _chapters.length - 1
+                    ? () => unawaited(_changeChapter(_chapters.length - 1))
+                    : null,
+                onSettings: _showReaderSettings,
+              ),
       ),
     );
   }
 
-  Widget _buildBody(BuildContext context) {
+  Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const ReaderLoadingView();
     }
 
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.menu_book_outlined,
-                size: 48,
-                color: AppColors.gold,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: AppFonts.body(context),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: _loadBook,
-                child: const Text('Try again'),
-              ),
-            ],
-          ),
-        ),
+      return ReaderErrorView(
+        message: _error!,
+        onRetry: () => unawaited(_loadBook()),
       );
     }
 
     final chapter = _currentChapter;
-
     if (chapter == null) {
-      return const Center(
-        child: Text(
-          'No chapter available.',
-        ),
-      );
+      return const ReaderEmptyView();
     }
 
-    final readingStyle =
-        AppFonts.readingContent(
-      context,
-      fontFamily: _readingFont,
+    return ReaderContent(
+      scrollController: _scrollController,
+      chapterTitle: _chapterTitle(chapter),
+      htmlContent: _chapterHtml,
+      readingFont: _readingFont,
       fontSize: _fontSize,
-    );
-
-    return NotificationListener<
-        ScrollEndNotification>(
-      onNotification: (notification) {
-        unawaited(_saveProgress());
-        return false;
-      },
-      child: SelectionArea(
-        child: SingleChildScrollView(
-          controller: _scrollController,
-          padding:
-              const EdgeInsets.fromLTRB(
-            24,
-            28,
-            24,
-            48,
-          ),
-          child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                _chapterTitle(chapter),
-                textAlign: TextAlign.center,
-                style: AppFonts.chapterTitle(
-                  context,
-                  fontSize: 32,
-                ),
-              ),
-              const SizedBox(height: 14),
-              const _ChapterDivider(),
-              const SizedBox(height: 18),
-              Html(
-                data:
-                    chapter.HtmlContent ?? '',
-                style: {
-                  'html':
-                      Style.fromTextStyle(
-                    readingStyle,
-                  ),
-                  'body':
-                      Style.fromTextStyle(
-                    readingStyle,
-                  ),
-                  'p': Style.fromTextStyle(
-                    readingStyle,
-                  ),
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
+      onScrollEnd: _saveProgress,
     );
   }
 }
 
-class _ChapterDivider
-    extends StatelessWidget {
-  const _ChapterDivider();
+class _ReaderChapter {
+  const _ReaderChapter({required this.title, required this.loadContent});
 
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const Expanded(
-          child: Divider(
-            color: AppColors.gold,
-            thickness: 0.7,
-          ),
-        ),
-        const Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: 10,
-          ),
-          child: Icon(
-            Icons.auto_awesome,
-            size: 15,
-            color: AppColors.gold,
-          ),
-        ),
-        const Expanded(
-          child: Divider(
-            color: AppColors.gold,
-            thickness: 0.7,
-          ),
-        ),
-      ],
-    );
-  }
+  final String? title;
+  final Future<String> Function() loadContent;
 }
 
-class _ReaderControls
-    extends StatelessWidget {
-  const _ReaderControls({
-    required this.currentChapter,
-    required this.totalChapters,
-    required this.onContents,
-    required this.onPrevious,
-    required this.onNext,
-    required this.onSettings,
-  });
+Future<String> _readEpubChapterHtml(
+  EpubBookRef book,
+  EpubChapterRef chapter, {
+  String? nextContentFileName,
+}) async {
+  final chapterFileName = chapter.ContentFileName;
+  final spineFiles = _epubSpineFiles(book);
+  final chapterIndex = chapterFileName == null
+      ? -1
+      : spineFiles.indexOf(chapterFileName);
+  final nextChapterIndex = nextContentFileName == null
+      ? spineFiles.length
+      : spineFiles.indexOf(nextContentFileName);
+  final filesToRead = chapterIndex >= 0
+      ? spineFiles.sublist(
+          chapterIndex,
+          nextChapterIndex > chapterIndex ? nextChapterIndex : chapterIndex + 1,
+        )
+      : <String>[];
 
-  final int currentChapter;
-  final int totalChapters;
+  if (filesToRead.isEmpty && chapterFileName != null) {
+    filesToRead.add(chapterFileName);
+  }
 
-  final VoidCallback onContents;
-  final VoidCallback? onPrevious;
-  final VoidCallback? onNext;
-  final VoidCallback onSettings;
+  final sections = <String>[];
+  final htmlFiles = book.Content?.Html;
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+  for (final fileName in filesToRead) {
+    final contentReference = htmlFiles?[fileName];
+    final rawHtml = contentReference == null
+        ? fileName == chapterFileName
+              ? await chapter.readHtmlContent()
+              : null
+        : await contentReference.readContentAsText();
 
-    final percentage = totalChapters <= 0
-        ? 0
-        : (((currentChapter + 1) /
-                    totalChapters) *
-                100)
-            .round();
+    if (rawHtml == null) {
+      continue;
+    }
 
-    return Material(
-      color: theme.colorScheme.surface,
-      elevation: 8,
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 64,
-          child: Row(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceAround,
-            children: [
-              IconButton(
-                tooltip: 'Contents',
-                onPressed: onContents,
-                icon: const Icon(
-                  Icons.format_list_bulleted,
-                ),
-              ),
-              IconButton(
-                tooltip:
-                    'Previous chapter',
-                onPressed: onPrevious,
-                icon: const Icon(
-                  Icons.chevron_left,
-                ),
-              ),
-              Text(
-                '$percentage%',
-                style: AppFonts.metadata(
-                  context,
-                  color: AppColors.gold,
-                ),
-              ),
-              IconButton(
-                tooltip: 'Next chapter',
-                onPressed: onNext,
-                icon: const Icon(
-                  Icons.chevron_right,
-                ),
-              ),
-              IconButton(
-                tooltip:
-                    'Reader settings',
-                onPressed: onSettings,
-                icon: const Icon(
-                  Icons.settings_outlined,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    final resolvedHtml = await _resolveEpubImages(book, rawHtml, fileName);
+    sections.add(_htmlBody(resolvedHtml));
+  }
+
+  return sections.isEmpty ? chapter.readHtmlContent() : sections.join('\n');
+}
+
+List<String> _epubSpineFiles(EpubBookRef book) {
+  final spineItems = book.Schema?.Package?.Spine?.Items ?? const [];
+  final manifestItems = book.Schema?.Package?.Manifest?.Items ?? const [];
+  final files = <String>[];
+
+  for (final spineItem in spineItems) {
+    for (final manifestItem in manifestItems) {
+      if (manifestItem.Id == spineItem.IdRef &&
+          manifestItem.Href != null &&
+          book.Content?.Html?.containsKey(manifestItem.Href) == true) {
+        files.add(manifestItem.Href!);
+        break;
+      }
+    }
+  }
+
+  return files;
+}
+
+String _htmlBody(String html) {
+  return RegExp(
+        r'<body\b[^>]*>(.*?)</body>',
+        caseSensitive: false,
+        dotAll: true,
+      ).firstMatch(html)?.group(1) ??
+      html;
+}
+
+Future<String> _resolveEpubImages(
+  EpubBookRef book,
+  String sourceHtml,
+  String contentFileName,
+) async {
+  var html = sourceHtml;
+  final images = book.Content?.Images;
+
+  if (images == null || images.isEmpty) {
+    return html;
+  }
+
+  final imageSources = RegExp(
+    r'''(?:src|href)\s*=\s*(["'])(.*?)\1''',
+    caseSensitive: false,
+  ).allMatches(html).map((match) => match.group(2)!).toSet();
+  final chapterDirectory = path.posix.dirname(contentFileName);
+
+  for (final source in imageSources) {
+    if (source.startsWith('data:') ||
+        source.startsWith('http://') ||
+        source.startsWith('https://')) {
+      continue;
+    }
+
+    final sourcePath = source.split(RegExp(r'[?#]')).first;
+    String decodedSource;
+    try {
+      decodedSource = Uri.decodeComponent(sourcePath);
+    } on FormatException {
+      decodedSource = sourcePath;
+    }
+
+    final resolvedPath = path.posix.normalize(
+      path.posix.join(chapterDirectory, decodedSource),
     );
+    var imageReference = images[resolvedPath] ?? images[decodedSource];
+
+    if (imageReference == null) {
+      for (final entry in images.entries) {
+        if (entry.key.toLowerCase() == resolvedPath.toLowerCase()) {
+          imageReference = entry.value;
+          break;
+        }
+      }
+    }
+
+    if (imageReference == null) {
+      continue;
+    }
+
+    final imageBytes = await imageReference.readContent();
+    final mimeType =
+        imageReference.ContentMimeType ?? _imageMimeType(resolvedPath);
+    final dataUri = 'data:$mimeType;base64,${base64Encode(imageBytes)}';
+
+    html = html
+        .replaceAll('"$source"', '"$dataUri"')
+        .replaceAll("'$source'", "'$dataUri'");
+  }
+
+  return html;
+}
+
+String _imageMimeType(String fileName) {
+  switch (path.posix.extension(fileName).toLowerCase()) {
+    case '.png':
+      return 'image/png';
+    case '.gif':
+      return 'image/gif';
+    case '.svg':
+      return 'image/svg+xml';
+    case '.webp':
+      return 'image/webp';
+    case '.bmp':
+      return 'image/bmp';
+    default:
+      return 'image/jpeg';
   }
 }

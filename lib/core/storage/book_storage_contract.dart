@@ -17,7 +17,7 @@ class StoredBookFile {
 abstract interface class BookStorage {
   Future<void> initialize();
 
-  Future<StoredBookFile> saveEpub({
+  Future<StoredBookFile> saveBook({
     required String originalName,
     required Uint8List bytes,
   });

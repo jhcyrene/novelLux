@@ -1,6 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+class NovelLuxHeader extends StatelessWidget {
+  const NovelLuxHeader({
+    super.key,
+    required this.onMenuPressed,
+    this.text = 'NoveLux',
+  });
+
+  final String text;
+  final VoidCallback onMenuPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const SizedBox(width: 2),
+        Flexible(child: NovelLuxBrand(text: text, fontSize: 26)),
+      ],
+    );
+  }
+}
+
 class NovelLuxBrand extends StatelessWidget {
   const NovelLuxBrand({
     super.key,
@@ -21,7 +42,7 @@ class NovelLuxBrand extends StatelessWidget {
 
     return Padding(
       padding: padding,
-      
+
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -40,7 +61,8 @@ class NovelLuxBrand extends StatelessWidget {
               fontSize: fontSize,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.2,
-              color: color ??
+              color:
+                  color ??
                   theme.appBarTheme.foregroundColor ??
                   theme.colorScheme.onSurface,
             ),
